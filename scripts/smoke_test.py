@@ -12,7 +12,7 @@ from kv_action.model import KVActionExpert
 def main():
     torch.manual_seed(0)
     b, action_tokens, context_tokens, heads, head_dim, backbone_width = 2, 5, 7, 2, 8, 32
-    expert = KVActionExpert(backbone_width, width=24, layers=2, heads=4)
+    expert = KVActionExpert(backbone_width, width=16, layers=2, heads=2)
     embeddings = torch.randn(b, action_tokens, backbone_width)
     # Two layers with actual [B, H_kv, S, D] cache tensors, not hidden states.
     kvs = [(torch.randn(b, heads, context_tokens, head_dim), torch.randn(b, heads, context_tokens, head_dim)) for _ in range(2)]
