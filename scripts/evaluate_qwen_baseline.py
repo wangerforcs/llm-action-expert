@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Direct native-Qwen tool-calling baseline on one APIGen trajectory.
+"""Direct native-Qwen/Qwen3.5 tool-calling baseline on one APIGen trajectory.
 
 This does not use the Action Expert or its manual prompt serialization. It
 renders Qwen3's own chat/tool template and asks the frozen Qwen model to
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer, AutoProcessor
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kv_action.data import canonical_action, load_records
@@ -55,6 +55,7 @@ def main():
     p.add_argument("--data", required=True)
     p.add_argument("--backbone", required=True)
     p.add_argument("--trajectory-index", type=int, default=0)
+    p.add_argument("--action-index", type=int, default=None, help="Optional one tool-call decision index within the trajectory.")
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--show-prompt-tail", action="store_true")
     p.add_argument("--include-think-actions", action="store_true", help="Match the optional training mode that supervises APIGen's synthetic think function.")
@@ -65,28 +66,43 @@ def main():
         tools = [tool for tool in tools if tool.get("name") != "think"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.bfloat16 if device.type == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
-    tokenizer = AutoTokenizer.from_pretrained(args.backbone)
-    model = AutoModelForCausalLM.from_pretrained(args.backbone, torch_dtype=dtype).to(device).eval()
+    # Qwen3 is a text CausalLM. Qwen3.5-9B is a conditional-generation VLM
+    # even for text-only requests, so it must be loaded through its Processor
+    # and ImageTextToText auto class. Both expose the same generate() contract
+    # for the text-only APIGen prompts below.
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(args.backbone)
+        model = AutoModelForCausalLM.from_pretrained(args.backbone, torch_dtype=dtype).to(device).eval()
+        processor = None
+    except ValueError as exc:
+        if "qwen3_5" not in str(exc):
+            raise
+        processor = AutoProcessor.from_pretrained(args.backbone)
+        tokenizer = processor.tokenizer
+        model = AutoModelForImageTextToText.from_pretrained(args.backbone, torch_dtype=dtype).to(device).eval()
     calls = sum(
         t.get("from") == "function_call"
         and (args.include_think_actions or json.loads(t["value"]).get("name") != "think")
         for t in record["conversations"]
     )
+    if args.action_index is not None and not 0 <= args.action_index < calls:
+        raise ValueError(f"--action-index must be in [0, {calls - 1}]")
     terminators = [tokenizer.eos_token_id]
     im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
     if isinstance(im_end, int) and im_end >= 0:
         terminators.append(im_end)
     with torch.no_grad():
-        for call_idx in range(calls):
+        for call_idx in ([args.action_index] if args.action_index is not None else range(calls)):
             messages, target = messages_before_call(record, call_idx, args.include_think_actions)
-            rendered = tokenizer.apply_chat_template(
+            template = processor if processor is not None else tokenizer
+            rendered = template.apply_chat_template(
                 messages,
                 tools=tools,
                 add_generation_prompt=True,
                 enable_thinking=False,
                 tokenize=False,
             )
-            inputs = tokenizer(rendered, return_tensors="pt").to(device)
+            inputs = (processor(text=[rendered], return_tensors="pt") if processor is not None else tokenizer(rendered, return_tensors="pt")).to(device)
             output = model.generate(
                 **inputs,
                 max_new_tokens=args.max_new_tokens,
@@ -98,7 +114,7 @@ def main():
             print(f"\n===== trajectory {args.trajectory_index}, action {call_idx} =====")
             if args.show_prompt_tail:
                 print(f"--- native Qwen prompt tail ---\n{rendered[-2500:]}")
-            print(f"--- Qwen3 raw output ---\n{raw}")
+            print(f"--- model raw output ---\n{raw}")
             print(f"--- APIGen target ---\n{target}")
 
 

@@ -69,7 +69,10 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.bfloat16 if device.type == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
     backbone = AutoModelForCausalLM.from_pretrained(args.backbone, torch_dtype=dtype).to(device)
-    model = KVConditionedPolicy(backbone, cfg["layer_ids"], cfg["kv_tokens"], cfg["expert_width"], int(cfg["expert_layers"]), cfg["expert_heads"], cfg.get("representation", "kv")).to(device)
+    model = KVConditionedPolicy(
+        backbone, cfg["layer_ids"], cfg["kv_tokens"], cfg["expert_width"], int(cfg["expert_layers"]),
+        cfg["expert_heads"], cfg.get("representation", "kv"), cfg.get("expert_arch", "custom"),
+    ).to(device)
     first = next(iter(loader))
     model(first.context_ids.to(device), first.context_mask.to(device), first.decoder_ids[:, :1].to(device))
     model.expert.load_state_dict(checkpoint["expert"]); model.eval()
@@ -86,8 +89,9 @@ def main():
             kvs, prefix_mask = model.prefill(context_ids, context_mask)
             generated = torch.full((context_ids.size(0), 1), tokenizer.bos_token_id or eos, device=device, dtype=torch.long)
             finished = torch.zeros(context_ids.size(0), device=device, dtype=torch.bool)
+            action_kvs = None
             for _ in range(args.max_new_tokens):
-                logits = model.decode_from_prefill(generated, kvs, prefix_mask).logits[:, -1]
+                logits, action_kvs = model.decode_step_from_prefill(generated[:, -1:], kvs, prefix_mask, action_kvs)
                 # Keep completed rows at EOS while the other rows finish.
                 # This permits batched AR decoding without altering completed
                 # predictions; decode below explicitly truncates at first EOS.

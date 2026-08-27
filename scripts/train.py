@@ -89,6 +89,7 @@ def parse_args():
     p.add_argument("--expert-width", type=int, default=1024)
     p.add_argument("--expert-layers", default="36", help="Action-tower depth; 36 aligns one-to-one with Qwen3-4B's layers.")
     p.add_argument("--expert-heads", type=int, default=8)
+    p.add_argument("--expert-arch", choices=["qwen3", "custom"], default="qwen3", help="qwen3 uses the official Qwen3 decoder stack; custom is the legacy prototype.")
     p.add_argument("--kv-layers", default="all", help="Comma-separated layers, auto for five probes, all for one-to-one Qwen3 alignment, or paired for downsampled mapping.")
     p.add_argument("--kv-tokens", default="all", help="Backbone KV tokens retained per layer; an integer suffix length or all input context tokens.")
     p.add_argument("--representation", choices=["kv", "last_hidden"], default="kv")
@@ -191,7 +192,10 @@ def main():
     if args.representation == "kv" and expert_layers != len(layer_ids):
         raise ValueError("For layer-synchronous KV mode, --expert-layers must equal selected KV layers (use auto).")
     kv_tokens = None if args.kv_tokens == "all" else args.kv_tokens
-    policy = KVConditionedPolicy(backbone, layer_ids, kv_tokens, args.expert_width, expert_layers, args.expert_heads, args.representation).to(device)
+    policy = KVConditionedPolicy(
+        backbone, layer_ids, kv_tokens, args.expert_width, expert_layers, args.expert_heads,
+        args.representation, args.expert_arch,
+    ).to(device)
     if args.resume_from is not None:
         resume_path = Path(args.resume_from)
         if not resume_path.is_file():

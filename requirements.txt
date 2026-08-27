@@ -1,6 +1,20 @@
-torch>=2.4
-transformers>=4.51,<5
-datasets>=3.0
-accelerate>=1.0
-tqdm>=4.66
-wandb>=0.21
+# Tested project environment: Python 3.10, NVIDIA H200, CUDA 12.6.
+# Install the CUDA-matched PyTorch wheel first (see README); pip will retain it
+# when the version below is already present.
+torch==2.7.1
+torchvision==0.22.1
+
+# Model loading and the official Qwen3Model-based Action Expert.
+# Qwen3.5's official conditional-generation implementation is available in
+# the current Transformers 5.x line; it retains the Qwen3 APIs used here.
+transformers==5.15.0
+tokenizers==0.22.2
+safetensors==0.8.0
+huggingface-hub==1.27.0
+accelerate==1.12.0
+pillow==12.3.0
+
+# Dataset acquisition/preprocessing and experiment runtime.
+datasets==4.1.1
+tqdm==4.67.1
+wandb==0.21.4
